@@ -11,8 +11,8 @@ import sounddevice as sd
 import threading
 import traceback
 import wave
-from decode import SSTVDecoder  # Asigură-te că decode.py este în același director
-from common import log_message  # Asigură-te că common.py este în același director
+from decode import SSTVDecoder
+from common import log_message
 
 # Global variables
 selected_image = None
