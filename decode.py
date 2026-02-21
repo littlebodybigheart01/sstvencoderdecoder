@@ -43,22 +43,23 @@ class SSTVDecoder(object):
         Initialize the SSTV decoder with an audio file and language.
         """
         self.mode = None
-        self.progress_callback = None  # Callback pentru progres
+        self.progress_callback = None  # Progress callback
         self.language = language  # Language setting
 
-        # Deschide fișierul audio și citește datele
+        # Open the audio file and read data
         self._audio_file = audio_file
+        self._should_close = hasattr(audio_file, "close")
 
-        # Citește fișierul audio folosind soundfile
+        # Read audio file using soundfile
         self._samples, self._sample_rate = soundfile.read(self._audio_file)
 
-        # Dacă este stereo, convertește în mono
+        # If stereo, convert to mono
         if self._samples.ndim > 1:  
             self._samples = self._samples.mean(axis=1)
 
-        # Setează alte valori implicite necesare
-        self._decoded_image = None  # Imagine decodificată (va fi generată în timpul decodificării)
-        self._line_count = 0        # Număr de linii procesate (util pentru progres)
+        # Set default values needed during decoding
+        self._decoded_image = None  # Decoded image (filled during decoding)
+        self._line_count = 0        # Number of processed lines (for progress)
 
     def __enter__(self):
         return self
@@ -94,8 +95,12 @@ class SSTVDecoder(object):
     def close(self):
         """Closes any input files if they exist"""
 
-        if self._audio_file is not None and not self._audio_file.closed:
-            self._audio_file.close()
+        if self._should_close and self._audio_file is not None:
+            try:
+                if not self._audio_file.closed:
+                    self._audio_file.close()
+            except AttributeError:
+                pass
 
     def _peak_fft_freq(self, data):
         """Finds the peak frequency from a section of audio data"""
@@ -139,7 +144,7 @@ class SSTVDecoder(object):
         for current_sample in range(0, len(self._samples) - header_size, jump_size):
             # Update search progress message
             if current_sample % (jump_size * 256) == 0:
-                search_msg = "Searching for calibration header... {:.1f}s" if self.language == 'English' else "Căutare antet de calibrare... {:.1f}s"
+                search_msg = "Searching for calibration header... {:.1f}s" if self.language == 'English' else "C?utare antet de calibrare... {:.1f}s"
                 progress = current_sample / self._sample_rate
                 log_message(search_msg.format(progress), recur=True)
 
@@ -157,12 +162,12 @@ class SSTVDecoder(object):
                and abs(self._peak_fft_freq(leader_2_area) - 1900) < 50
                and abs(self._peak_fft_freq(vis_start_area) - 1200) < 50):
 
-                stop_msg = "Searching for calibration header... Found!{:>4}" if self.language == 'English' else "Căutare antet de calibrare... Găsit!{:>4}"
+                stop_msg = "Searching for calibration header... Found!{:>4}" if self.language == 'English' else "C?utare antet de calibrare... G?sit!{:>4}"
                 log_message(stop_msg.format(' '))
                 return current_sample + header_size
 
         log_message()
-        error_msg = "Couldn't find SSTV header in the given audio file" if self.language == 'English' else "Nu s-a putut găsi antetul SSTV în fișierul audio furnizat"
+        error_msg = "Couldn't find SSTV header in the given audio file" if self.language == 'English' else "Nu s-a putut g?si antetul SSTV ?n fi?ierul audio furnizat"
         log_message(error_msg, err=True)
         return None
 
@@ -241,7 +246,7 @@ class SSTVDecoder(object):
             # Start at the end of the initial sync pulse
             seq_start = self._align_sync(image_start, start_of_sync=False)
             if seq_start is None:
-                raise EOFError("Reached end of audio before image data" if self.language == 'English' else "A ajuns la sfârșitul audio înainte de datele imaginii")
+                raise EOFError("Reached end of audio before image data" if self.language == 'English' else "A ajuns la sf?r?itul audio ?nainte de datele imaginii")
 
         for line in range(height):
             if self.mode.CHAN_SYNC > 0 and line == 0:
@@ -259,7 +264,7 @@ class SSTVDecoder(object):
                     seq_start = self._align_sync(seq_start)
                     if seq_start is None:
                         log_message()
-                        error_msg = "Reached end of audio whilst decoding." if self.language == 'English' else "A ajuns la sfârșitul audio în timpul decodificării."
+                        error_msg = "Reached end of audio whilst decoding." if self.language == 'English' else "A ajuns la sf?r?itul audio ?n timpul decodific?rii."
                         log_message(error_msg)
                         return image_data
 
@@ -281,7 +286,7 @@ class SSTVDecoder(object):
                     # If we are performing fft past audio length, stop early
                     if px_end >= len(self._samples):
                         log_message()
-                        error_msg = "Reached end of audio whilst decoding." if self.language == 'English' else "A ajuns la sfârșitul audio în timpul decodificării."
+                        error_msg = "Reached end of audio whilst decoding." if self.language == 'English' else "A ajuns la sf?r?itul audio ?n timpul decodific?rii."
                         log_message(error_msg)
                         return image_data
 
@@ -290,7 +295,7 @@ class SSTVDecoder(object):
 
                     image_data[line][chan][px] = calc_lum(freq)
 
-            # Actualizează progresul pentru fiecare linie
+            # Update progress for each line
             if self.progress_callback:
                 decoding_message = "Decoding image..." if self.language == 'English' else "Decodificare imagine..."
                 self.progress_callback(line + 1, height, decoding_message)

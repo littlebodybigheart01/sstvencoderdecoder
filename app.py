@@ -1,351 +1,760 @@
-# app.py
+﻿# app.py
 
-import sys
 import os
+import sys
+import threading
+import traceback
+import wave
+
+import numpy as np
+import sounddevice as sd
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageTk, ImageOps
 from pysstv.color import Robot36, MartinM1, MartinM2, ScottieS1, ScottieS2, ScottieDX
-import numpy as np
-import sounddevice as sd
-import threading
-import traceback
-import wave
+
+try:
+    from pysstv.color import Robot72
+except ImportError:
+    Robot72 = None
+
 from decode import SSTVDecoder
 from common import log_message
 
-# Global variables
-selected_image = None
-sstv_signal = None  # Store the generated SSTV signal globally
-mode_var = None  # Tkinter StringVar for selected mode
-is_playing = False  # Flag to indicate if playback is ongoing
-play_button = None  # Reference to the play/stop button
-message_label = None  # Label to display messages
-status_label = None  # Label to display status messages
-image_canvas = None  # Reference to the image canvas
-decoded_image_canvas = None  # Canvas for decoded image
-detected_mode_label = None  # Label for detected mode
-icon_photo = None  # Reference to the upload icon image
-remove_icon_photo = None  # Reference to the remove icon image
-language = 'English'  # Default language
-lang_var = None  # Tkinter StringVar for language selection
-decoded_image_reference = None  # Reference to the decoded image
-current_mode = 'main'  # 'main', 'encode', 'decode'
 
-# Widgets to update on language change
-widgets_to_update = {}
-
-# Texts for English and Romanian
-texts = {
-    'English': {
-        'title': "SSTV Encoder and Decoder",
-        'choose_action': "Choose an action:",
-        'encode_sstv': "Encode SSTV",
-        'decode_sstv': "Decode SSTV",
-        'exit': "Exit",
-        'sstv_encoder': "SSTV Encoder",
-        'sstv_decoder': "SSTV Decoder",
-        'image_success': "Image Successfully Uploaded!",
-        'press_upload': "Press here to upload an image!",
-        'select_mode': "Select SSTV Mode:",
-        'select_sstv_mode': "Select SSTV Mode:",
-        'generate_play': "Generate and Play SSTV",
-        'stop': "Stop",
-        'playing': "Playing...",
-        'download_signal': "Download SSTV Signal",
-        'load_sstv_audio': "Load SSTV Audio File",
-        'back': "Back",
-        'version_info': "SSTV Encoder and Decoder\nVersion: 1.0.0",
-        'version': "Version",
-        'file': "File",
-        'help': "Help",
-        'language_menu': "Language",
-        'english_label': "English",
-        'romanian_label': "Română",
-        'no_playback': "No playback to stop.",
-        'info': "Info",
-        'save_signal': "Save SSTV Signal",
-        'wav_files': "WAV files",
-        'signal_saved': "SSTV signal saved as '{}'",
-        'success': "Success",
-        'error': "Error",
-        'failed_generate_play': "Failed to generate and play SSTV signal: {}",
-        'failed_generate_save': "Failed to generate and save SSTV signal: {}",
-        'failed_decode_sstv': "Failed to decode SSTV signal: {}",
-        'image_files': "Image files",
-        'image_load_error': "Failed to load image: {}",
-        'please_select_image': "Please select an image first!",
-        'unsupported_mode': "Unsupported mode: {}",
-        'please_wait': "Please wait...",
-        'decode_success': "✅ Decoding completed successfully!",
-        'detected_mode_none': "Detected Mode: None",
-        'detected_mode_unknown': "Detected Mode: Unknown",
-        'save_decoded_image': "Save Decoded Image",
-        'decoded_image_saved': "Decoded image saved as '{}'",
-        'failed_save_image': "Failed to save decoded image: {}",
-        'no_decoded_image': "No decoded image to save.",
+TEXTS = {
+    "English": {
+        "app_title": "SSTV Studio",
+        "app_tagline": "Encode images into SSTV audio and decode signals back to images.",
+        "action_choose": "Choose a direction",
+        "card_encode_title": "Encode",
+        "card_encode_desc": "Turn a picture into a clean SSTV audio signal.",
+        "card_decode_title": "Decode",
+        "card_decode_desc": "Recover an image from an SSTV audio file.",
+        "button_encode": "Open Encoder",
+        "button_decode": "Open Decoder",
+        "header_encoder": "SSTV Encoder",
+        "header_decoder": "SSTV Decoder",
+        "upload_hint": "Click to upload an image",
+        "upload_image": "Upload Image",
+        "remove_image": "Remove Image",
+        "mode_label": "SSTV Mode",
+        "play_signal": "Generate & Play",
+        "stop_playback": "Stop",
+        "save_wav": "Save WAV",
+        "load_audio": "Load SSTV Audio",
+        "save_image": "Save Image",
+        "clear_image": "Clear",
+        "back": "Back",
+        "status_ready": "Ready",
+        "status_loaded": "Image loaded",
+        "status_playing": "Playing…",
+        "status_saved": "Saved",
+        "status_decoding": "Decoding…",
+        "status_decoded": "Decoded",
+        "detected_mode_none": "Detected Mode: None",
+        "detected_mode_unknown": "Detected Mode: Unknown",
+        "signal_saved": "SSTV signal saved as '{}'",
+        "no_sstv_signal": "No SSTV signal found.",
+        "info_title": "About",
+        "version_info": "SSTV Studio\nVersion: 2.0.0",
+        "language_label": "Language",
+        "error": "Error",
+        "success": "Success",
+        "info": "Info",
+        "no_playback": "No playback to stop.",
+        "image_files": "Image files",
+        "wav_files": "WAV files",
+        "please_select_image": "Please select an image first.",
+        "unsupported_mode": "Unsupported mode: {}",
+        "image_load_error": "Failed to load image: {}",
+        "failed_generate_play": "Failed to generate and play SSTV signal: {}",
+        "failed_generate_save": "Failed to generate and save SSTV signal: {}",
+        "failed_decode_sstv": "Failed to decode SSTV signal: {}",
+        "failed_save_image": "Failed to save image: {}",
+        "no_decoded_image": "No decoded image to save.",
+        "decoded_image_saved": "Decoded image saved as '{}'",
     },
-    'Romanian': {
-        'title': "SSTV Encoder and Decoder",
-        'choose_action': "Alege o acțiune:",
-        'encode_sstv': "Codifică SSTV",
-        'decode_sstv': "Decodifică SSTV",
-        'exit': "Ieșire",
-        'sstv_encoder': "Codificator SSTV",
-        'sstv_decoder': "Decodificator SSTV",
-        'image_success': "Imagine încărcată cu succes!",
-        'press_upload': "Apasă aici pentru a încărca o imagine!",
-        'select_mode': "Selectează modul SSTV:",
-        'select_sstv_mode': "Selectează modul SSTV:",
-        'generate_play': "Generează și Redă SSTV",
-        'stop': "Oprește",
-        'playing': "Redare...",
-        'download_signal': "Descarcă Semnal SSTV",
-        'load_sstv_audio': "Încarcă Fișier Audio SSTV",
-        'back': "Înapoi",
-        'version_info': "SSTV Encoder and Decoder\nVersiune: 1.0.0",
-        'version': "Versiune",
-        'file': "Fișier",
-        'help': "Ajutor",
-        'language_menu': "Limba",
-        'english_label': "English",
-        'romanian_label': "Română",
-        'no_playback': "Nu există redare de oprit.",
-        'info': "Informație",
-        'save_signal': "Salvează Semnalul SSTV",
-        'wav_files': "Fișiere WAV",
-        'signal_saved': "Semnalul SSTV a fost salvat ca '{}'",
-        'success': "Succes",
-        'error': "Eroare",
-        'failed_generate_play': "Eroare la generarea și redarea semnalului SSTV: {}",
-        'failed_generate_save': "Eroare la generarea și salvarea semnalului SSTV: {}",
-        'failed_decode_sstv': "Eroare la decodificarea semnalului SSTV: {}",
-        'image_files': "Fișiere imagine",
-        'image_load_error': "Eroare la încărcarea imaginii: {}",
-        'please_select_image': "Vă rugăm să selectați mai întâi o imagine!",
-        'unsupported_mode': "Mod nesuportat: {}",
-        'please_wait': "Vă rugăm să așteptați...",
-        'decode_success': "✅ Decodare completă cu succes!",
-        'detected_mode_none': "Mod Detectat: Nedefinit",
-        'detected_mode_unknown': "Mod Detectat: Necunoscut",
-        'save_decoded_image': "Salvează Imaginea Decodată",
-        'decoded_image_saved': "Imaginea decodată a fost salvată ca '{}'",
-        'failed_save_image': "Eroare la salvarea imaginii decodate: {}",
-        'no_decoded_image': "Nicio imagine decodată de salvat.",
-    }
+    "Romanian": {
+        "app_title": "SSTV Studio",
+        "app_tagline": "Codifică imagini în audio SSTV și decodifică semnale înapoi în imagini.",
+        "action_choose": "Alege o direcție",
+        "card_encode_title": "Codificare",
+        "card_encode_desc": "Transformă o imagine într-un semnal SSTV curat.",
+        "card_decode_title": "Decodificare",
+        "card_decode_desc": "Recuperează o imagine dintr-un fișier audio SSTV.",
+        "button_encode": "Deschide Codificator",
+        "button_decode": "Deschide Decodificator",
+        "header_encoder": "Codificator SSTV",
+        "header_decoder": "Decodificator SSTV",
+        "upload_hint": "Apasă pentru a încărca o imagine",
+        "upload_image": "Încarcă Imagine",
+        "remove_image": "Șterge Imagine",
+        "mode_label": "Mod SSTV",
+        "play_signal": "Generează & Redă",
+        "stop_playback": "Oprește",
+        "save_wav": "Salvează WAV",
+        "load_audio": "Încarcă Audio SSTV",
+        "save_image": "Salvează Imaginea",
+        "clear_image": "Curăță",
+        "back": "Înapoi",
+        "status_ready": "Gata",
+        "status_loaded": "Imagine încărcată",
+        "status_playing": "Redare…",
+        "status_saved": "Salvat",
+        "status_decoding": "Decodificare…",
+        "status_decoded": "Decodat",
+        "detected_mode_none": "Mod Detectat: Niciunul",
+        "detected_mode_unknown": "Mod Detectat: Necunoscut",
+        "signal_saved": "Semnal SSTV salvat ca '{}'",
+        "no_sstv_signal": "Nu s-a găsit semnal SSTV.",
+        "info_title": "Despre",
+        "version_info": "SSTV Studio\nVersiune: 2.0.0",
+        "language_label": "Limba",
+        "error": "Eroare",
+        "success": "Succes",
+        "info": "Info",
+        "no_playback": "Nu există redare de oprit.",
+        "image_files": "Fișiere imagine",
+        "wav_files": "Fișiere WAV",
+        "please_select_image": "Te rog selectează mai întâi o imagine.",
+        "unsupported_mode": "Mod nesuportat: {}",
+        "image_load_error": "Eroare la încărcarea imaginii: {}",
+        "failed_generate_play": "Eroare la generarea și redarea semnalului SSTV: {}",
+        "failed_generate_save": "Eroare la generarea și salvarea semnalului SSTV: {}",
+        "failed_decode_sstv": "Eroare la decodificarea semnalului SSTV: {}",
+        "failed_save_image": "Eroare la salvarea imaginii: {}",
+        "no_decoded_image": "Nu există imagine decodată de salvat.",
+        "decoded_image_saved": "Imaginea decodată a fost salvată ca '{}'",
+    },
 }
 
-# Determine the resampling method based on Pillow version
-try:
-    resample_method = Image.LANCZOS
-except AttributeError:
-    resample_method = Image.ANTIALIAS  # For older versions of Pillow
 
 def resource_path(relative_path):
-    """
-    Obține calea absolută către resurse, indiferent dacă aplicația este executabilă sau rulată din sursă.
-    """
     try:
-        # PyInstaller creează un director temporar și setează variabila _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-def set_language(lang):
-    """Set the language of the application."""
-    global language, lang_var
-    language = lang
-    lang_var.set(lang)
-    create_menu_bar()
-    update_texts_in_current_window()
 
-def create_menu_bar():
-    """Create the menu bar based on the current language."""
-    global menu_bar, file_menu, help_menu, language_menu, lang_var
-    # Remove the existing menu bar
-    window.config(menu='')
-    # Create new menu bar
-    menu_bar = tk.Menu(window)
-    # File menu
-    file_menu = tk.Menu(menu_bar, tearoff=0)
-    file_menu.add_command(label=texts[language]['exit'], command=window.quit)
-    menu_bar.add_cascade(label=texts[language]['file'], menu=file_menu)
-    # Help menu
-    help_menu = tk.Menu(menu_bar, tearoff=0)
-    help_menu.add_command(label=texts[language]['version'], command=show_version)
-    menu_bar.add_cascade(label=texts[language]['help'], menu=help_menu)
-    # Language menu
-    language_menu = tk.Menu(menu_bar, tearoff=0)
-    language_menu.add_radiobutton(label=texts[language]['english_label'], variable=lang_var, value='English', command=lambda: set_language('English'))
-    language_menu.add_radiobutton(label=texts[language]['romanian_label'], variable=lang_var, value='Romanian', command=lambda: set_language('Romanian'))
-    menu_bar.add_cascade(label=texts[language]['language_menu'], menu=language_menu)
-    window.config(menu=menu_bar)
-    # Update window title
-    window.title(texts[language]['title'])
+class SSTVApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
 
-def update_texts_in_current_window():
-    """Update the texts in the current window."""
-    global widgets_to_update, selected_image, image_canvas, decoded_image_canvas, current_mode
-    for widget_name, widget in widgets_to_update.items():
-        if widget_name == 'main_label':
-            widget.config(text=texts[language]['choose_action'])
-        elif widget_name == 'encode_button':
-            widget.config(text=texts[language]['encode_sstv'])
-        elif widget_name == 'decode_button':
-            widget.config(text=texts[language]['decode_sstv'])
-        elif widget_name == 'exit_button':
-            widget.config(text=texts[language]['exit'])
-        elif widget_name == 'sstv_label':
-            if current_mode == 'encode':
-                widget.config(text=texts[language]['sstv_encoder'])
-            elif current_mode == 'decode':
-                widget.config(text=texts[language]['sstv_decoder'])
-        elif widget_name == 'sstv_decoder_label':
-            widget.config(text=texts[language]['sstv_decoder'])
-        elif widget_name == 'status_label':
-            # Update based on whether an image is loaded
-            if selected_image:
-                widget.config(text=texts[language]['image_success'], fg="green")
-            else:
-                widget.config(text='')
-        elif widget_name == 'mode_label':
-            widget.config(text=texts[language]['select_mode'])
-        elif widget_name == 'sstv_mode_label':
-            widget.config(text=texts[language]['select_sstv_mode'])
-        elif widget_name == 'play_button':
-            if is_playing:
-                widget.config(text=texts[language]['stop'])
-            else:
-                widget.config(text=texts[language]['generate_play'])
-        elif widget_name == 'download_button':
-            widget.config(text=texts[language]['download_signal'])
-        elif widget_name == 'load_button':
-            widget.config(text=texts[language]['load_sstv_audio'])
-        elif widget_name == 'back_button':
-            widget.config(text=texts[language]['back'])
-        elif widget_name == 'message_label':
-            if is_playing:
-                widget.config(text=texts[language]['playing'])
-            else:
-                widget.config(text='')
-        elif widget_name == 'image_canvas':
-            # Update the upload prompt text only if no image is loaded
-            if not selected_image:
-                image_canvas.delete('prompt_text')
-                image_canvas.create_text(160, 130, text=texts[language]['press_upload'], anchor="center", font=("Arial", 12), tags='prompt_text')
-        elif widget_name == 'decoded_image_canvas':
-            # Reset decoded image canvas
-            if not decoded_image_canvas.find_all():
-                pass  # No action needed
-        elif widget_name == 'detected_mode_label':
-            # Reset detected mode label
-            current_text = detected_mode_label.cget("text")
-            if not current_text.startswith("✅") and not (language == 'Romanian' and current_text.startswith("Mod Detectat")):
-                widget.config(text=texts[language]['detected_mode_none'] if language == 'English' else texts[language]['detected_mode_none'])
-        elif widget_name == 'delete_decoded_button':
-            # Update delete button tooltip or text if necessary
-            pass
-        elif widget_name == 'save_decoded_button':
-            widget.config(text=texts[language]['save_decoded_image'])
-        # Removed 'terminal_output' as per previous modifications
+        self.language = "English"
+        self.selected_image = None
+        self.sstv_signal = None
+        self.is_playing = False
+        self.decoded_image_reference = None
 
-    # Actualizează label-ul bifei verzi dacă limba se schimbă
-    if hasattr(window, 'checkmark_label'):
-        window.checkmark_label.config(text="✅" if language == 'English' else "✅")
+        self.mode_var = tk.StringVar(value="Robot 36")
+        self.lang_display_var = tk.StringVar(value="English")
+        self.status_var = tk.StringVar(value="")
+        self.wait_var = tk.StringVar(value="")
+        self.detected_mode_var = tk.StringVar(value="")
 
-def load_image(canvas):
-    """Load, scale, and display the selected image."""
-    global selected_image, status_label, language
-    file_path = filedialog.askopenfilename(filetypes=[(texts[language]['image_files'], "*.jpg;*.png;*.bmp")])
-    if file_path:
+        self._image_preview = None
+        self._decoded_preview = None
+        self._detected_mode_name = None
+        self._detected_mode_unknown = False
+        self._is_decoding = False
+
+        self._text_widgets = []
+        self._dynamic_updaters = []
+
+        self._setup_window()
+        self._setup_style()
+        self._setup_background()
+        self._setup_layout()
+        self._set_language("English")
+
+    def tr(self, key):
+        return TEXTS[self.language].get(key, key)
+
+    def _setup_window(self):
+        self.title(TEXTS[self.language]["app_title"])
+        self.geometry("980x680")
+        self.minsize(860, 600)
+        self.configure(bg="#f5f0e7")
+
+        icon_path = resource_path("icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except Exception as exc:
+                print(f"Error setting icon: {exc}")
+
+    def _setup_style(self):
+        self.colors = {
+            "bg_start": "#f5f0e7",
+            "bg_end": "#cfe8e1",
+            "card": "#ffffff",
+            "ink": "#1f2a30",
+            "muted": "#5a6b74",
+            "accent": "#e76f51",
+            "accent_alt": "#2a9d8f",
+            "border": "#dde3dc",
+        }
+
+        self.fonts = {
+            "title": ("Bahnschrift SemiBold", 22),
+            "subtitle": ("Bahnschrift", 11),
+            "heading": ("Bahnschrift SemiBold", 14),
+            "body": ("Bahnschrift", 11),
+            "button": ("Bahnschrift SemiBold", 11),
+        }
+
+        style = ttk.Style(self)
+        style.theme_use("clam")
+
+        style.configure("App.TFrame", background=self.colors["card"])
+        style.configure("Card.TFrame", background=self.colors["card"], relief="flat")
+        style.configure("Header.TFrame", background=self.colors["card"])
+        style.configure("Body.TFrame", background=self.colors["card"])
+        style.configure(
+            "Title.TLabel",
+            background=self.colors["card"],
+            foreground=self.colors["ink"],
+            font=self.fonts["title"],
+        )
+        style.configure(
+            "Subtitle.TLabel",
+            background=self.colors["card"],
+            foreground=self.colors["muted"],
+            font=self.fonts["subtitle"],
+        )
+        style.configure(
+            "Heading.TLabel",
+            background=self.colors["card"],
+            foreground=self.colors["ink"],
+            font=self.fonts["heading"],
+        )
+        style.configure(
+            "Body.TLabel",
+            background=self.colors["card"],
+            foreground=self.colors["muted"],
+            font=self.fonts["body"],
+        )
+        style.configure(
+            "Status.TLabel",
+            background=self.colors["card"],
+            foreground=self.colors["accent_alt"],
+            font=self.fonts["body"],
+        )
+        style.configure(
+            "Muted.TLabel",
+            background=self.colors["card"],
+            foreground=self.colors["muted"],
+            font=self.fonts["body"],
+        )
+
+        style.configure(
+            "Primary.TButton",
+            font=self.fonts["button"],
+            foreground="#ffffff",
+            background=self.colors["accent"],
+            padding=(14, 8),
+            borderwidth=0,
+        )
+        style.map("Primary.TButton", background=[("active", "#de5e40")])
+
+        style.configure(
+            "Secondary.TButton",
+            font=self.fonts["button"],
+            foreground=self.colors["ink"],
+            background="#f1f3f2",
+            padding=(14, 8),
+            borderwidth=0,
+        )
+        style.map("Secondary.TButton", background=[("active", "#e5e8e6")])
+
+        style.configure(
+            "Ghost.TButton",
+            font=self.fonts["button"],
+            foreground=self.colors["accent_alt"],
+            background=self.colors["card"],
+            padding=(10, 6),
+            borderwidth=0,
+        )
+        style.map("Ghost.TButton", background=[("active", "#eef5f3")])
+
+        style.configure(
+            "Link.TButton",
+            font=self.fonts["body"],
+            foreground=self.colors["accent_alt"],
+            background=self.colors["card"],
+            padding=(6, 2),
+            borderwidth=0,
+        )
+
+        style.configure("TCombobox", padding=(6, 4))
+
+    def _setup_background(self):
+        self.bg_canvas = tk.Canvas(self, highlightthickness=0)
+        self.bg_canvas.pack(fill="both", expand=True)
+        self.bg_canvas.bind("<Configure>", self._draw_background)
+
+    def _setup_layout(self):
+        self.content = ttk.Frame(self.bg_canvas, style="App.TFrame")
+        self.bg_window = self.bg_canvas.create_window(0, 0, window=self.content, anchor="nw")
+
+        self.header = ttk.Frame(self.content, style="Header.TFrame")
+        self.header.pack(fill="x", padx=32, pady=(28, 10))
+
+        self.body = ttk.Frame(self.content, style="Body.TFrame")
+        self.body.pack(fill="both", expand=True, padx=32, pady=(8, 24))
+
+        self._build_header()
+        self.show_main_view()
+
+        self.bg_canvas.bind("<Configure>", self._position_content)
+
+    def _position_content(self, event):
+        width = max(760, event.width - 60)
+        height = max(520, event.height - 60)
+        width = min(width, 980)
+        height = min(height, 680)
+        self.bg_canvas.itemconfigure(self.bg_window, width=width, height=height)
+        x = (event.width - width) / 2
+        y = (event.height - height) / 2
+        self.bg_canvas.coords(self.bg_window, x, y)
+
+    def _draw_background(self, event):
+        self.bg_canvas.delete("bg")
+        self._draw_gradient(
+            0,
+            0,
+            event.width,
+            event.height,
+            self.colors["bg_start"],
+            self.colors["bg_end"],
+        )
+
+        width = event.width
+        height = event.height
+        self.bg_canvas.create_oval(
+            width * 0.62,
+            -height * 0.2,
+            width * 1.15,
+            height * 0.6,
+            fill="#f2d8c9",
+            outline="",
+            tags="bg",
+        )
+        self.bg_canvas.create_oval(
+            -width * 0.2,
+            height * 0.35,
+            width * 0.45,
+            height * 1.1,
+            fill="#d7efe8",
+            outline="",
+            tags="bg",
+        )
+
+    def _draw_gradient(self, x0, y0, x1, y1, color1, color2):
+        steps = 120
+        r1, g1, b1 = self._hex_to_rgb(color1)
+        r2, g2, b2 = self._hex_to_rgb(color2)
+        for i in range(steps):
+            ratio = i / steps
+            r = int(r1 + (r2 - r1) * ratio)
+            g = int(g1 + (g2 - g1) * ratio)
+            b = int(b1 + (b2 - b1) * ratio)
+            color = f"#{r:02x}{g:02x}{b:02x}"
+            y = y0 + int((y1 - y0) * ratio)
+            self.bg_canvas.create_rectangle(x0, y, x1, y + 4, outline="", fill=color, tags="bg")
+
+    @staticmethod
+    def _hex_to_rgb(hex_color):
+        hex_color = hex_color.lstrip("#")
+        return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+
+    def _build_header(self):
+        self.header.columnconfigure(0, weight=1)
+
+        title_frame = ttk.Frame(self.header, style="Header.TFrame")
+        title_frame.grid(row=0, column=0, sticky="w")
+
+        self.title_label = ttk.Label(title_frame, style="Title.TLabel")
+        self.title_label.pack(anchor="w")
+        self._bind_text(self.title_label, "app_title")
+
+        self.subtitle_label = ttk.Label(title_frame, style="Subtitle.TLabel")
+        self.subtitle_label.pack(anchor="w")
+        self._bind_text(self.subtitle_label, "app_tagline")
+
+        control_frame = ttk.Frame(self.header, style="Header.TFrame")
+        control_frame.grid(row=0, column=1, sticky="e")
+
+        self.lang_label = ttk.Label(control_frame, style="Body.TLabel")
+        self.lang_label.grid(row=0, column=0, padx=(0, 8))
+        self._bind_text(self.lang_label, "language_label")
+
+        self.lang_combo = ttk.Combobox(
+            control_frame,
+            textvariable=self.lang_display_var,
+            values=["English", "Română"],
+            state="readonly",
+            width=10,
+        )
+        self.lang_combo.grid(row=0, column=1, padx=(0, 10))
+        self.lang_combo.bind("<<ComboboxSelected>>", self._on_language_change)
+
+        self.about_button = ttk.Button(
+            control_frame,
+            style="Ghost.TButton",
+            text="About",
+            command=self._show_about,
+        )
+        self.about_button.grid(row=0, column=2)
+
+    def _bind_text(self, widget, key):
+        widget._text_key = key
+        self._text_widgets.append(widget)
+        widget.configure(text=self.tr(key))
+
+    def _refresh_texts(self):
+        for widget in self._text_widgets:
+            key = getattr(widget, "_text_key", None)
+            if key:
+                widget.configure(text=self.tr(key))
+
+        for updater in self._dynamic_updaters:
+            updater()
+
+        self.title(self.tr("app_title"))
+        self.lang_combo.set("Română" if self.language == "Romanian" else "English")
+        self.about_button.configure(text=self.tr("info_title"))
+        if self._is_decoding:
+            self.wait_var.set(self.tr("status_decoding"))
+
+    def _show_about(self):
+        messagebox.showinfo(self.tr("info_title"), self.tr("version_info"))
+
+    def _on_language_change(self, _event=None):
+        label = self.lang_display_var.get()
+        self._set_language("Romanian" if label == "Română" else "English")
+
+    def _set_language(self, lang):
+        self.language = lang
+        self._refresh_texts()
+
+    def _clear_body(self):
+        for widget in self.body.winfo_children():
+            widget.destroy()
+        self._text_widgets = [w for w in self._text_widgets if w.winfo_exists()]
+        self._dynamic_updaters = []
+
+    def _stagger_show(self, widgets, delay=70):
+        for index, widget in enumerate(widgets):
+            widget.grid_remove()
+            self.after(delay * index, widget.grid)
+
+    def show_main_view(self):
+        self._clear_body()
+
+        self.status_var.set("")
+
+        title = ttk.Label(self.body, style="Heading.TLabel")
+        title.grid(row=0, column=0, sticky="w")
+        self._bind_text(title, "action_choose")
+
+        cards = ttk.Frame(self.body, style="Body.TFrame")
+        cards.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+        cards.columnconfigure(0, weight=1)
+        cards.columnconfigure(1, weight=1)
+
+        encode_card = self._make_card(
+            cards,
+            "card_encode_title",
+            "card_encode_desc",
+            "button_encode",
+            self.show_encode_view,
+        )
+        encode_card.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+
+        decode_card = self._make_card(
+            cards,
+            "card_decode_title",
+            "card_decode_desc",
+            "button_decode",
+            self.show_decode_view,
+        )
+        decode_card.grid(row=0, column=1, sticky="nsew", padx=(14, 0))
+
+        self.body.rowconfigure(1, weight=1)
+        self._stagger_show([encode_card, decode_card])
+
+    def _make_card(self, parent, title_key, desc_key, button_key, command):
+        card = ttk.Frame(parent, style="Card.TFrame", padding=18)
+        card.columnconfigure(0, weight=1)
+
+        title = ttk.Label(card, style="Heading.TLabel")
+        title.grid(row=0, column=0, sticky="w")
+        self._bind_text(title, title_key)
+
+        desc = ttk.Label(card, style="Body.TLabel", wraplength=280, justify="left")
+        desc.grid(row=1, column=0, sticky="w", pady=(6, 14))
+        self._bind_text(desc, desc_key)
+
+        button = ttk.Button(card, style="Primary.TButton", command=command)
+        button.grid(row=2, column=0, sticky="w")
+        self._bind_text(button, button_key)
+
+        return card
+
+    def show_encode_view(self):
+        self._clear_body()
+
+        header = ttk.Label(self.body, style="Heading.TLabel")
+        header.grid(row=0, column=0, sticky="w")
+        self._bind_text(header, "header_encoder")
+
+        layout = ttk.Frame(self.body, style="Body.TFrame")
+        layout.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        layout.columnconfigure(0, weight=1)
+        layout.columnconfigure(1, weight=1)
+
+        self.image_card = ttk.Frame(layout, style="Card.TFrame", padding=16)
+        self.image_card.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+        self.image_card.columnconfigure(0, weight=1)
+
+        self.image_canvas = tk.Canvas(
+            self.image_card,
+            width=360,
+            height=270,
+            bg="#f1f3f2",
+            highlightthickness=0,
+        )
+        self.image_canvas.grid(row=0, column=0, sticky="nsew")
+        self.image_canvas.bind("<Button-1>", lambda _e: self.load_image())
+
+        self._show_upload_prompt()
+
+        controls = ttk.Frame(layout, style="Card.TFrame", padding=16)
+        controls.grid(row=0, column=1, sticky="nsew", padx=(14, 0))
+        controls.columnconfigure(0, weight=1)
+
+        mode_label = ttk.Label(controls, style="Body.TLabel")
+        mode_label.grid(row=0, column=0, sticky="w")
+        self._bind_text(mode_label, "mode_label")
+
+        mode_options = ["Robot 36"]
+        if Robot72 is not None:
+            mode_options.append("Robot 72")
+        mode_options.extend(
+            [
+                "Martin M1",
+                "Martin M2",
+                "Scottie S1",
+                "Scottie S2",
+                "Scottie DX",
+            ]
+        )
+        self.mode_combo = ttk.Combobox(controls, textvariable=self.mode_var, values=mode_options, state="readonly")
+        self.mode_combo.grid(row=1, column=0, sticky="ew", pady=(6, 12))
+
+        self.play_button = ttk.Button(controls, style="Primary.TButton", command=self.generate_and_play_sstv)
+        self.play_button.grid(row=2, column=0, sticky="ew")
+
+        self.save_wav_button = ttk.Button(controls, style="Secondary.TButton", command=self.download_sstv)
+        self.save_wav_button.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        self._bind_text(self.save_wav_button, "save_wav")
+
+        self.remove_button = ttk.Button(controls, style="Ghost.TButton", command=self.remove_image)
+        self.remove_button.grid(row=4, column=0, sticky="w", pady=(12, 0))
+        self._bind_text(self.remove_button, "remove_image")
+
+        self.back_button = ttk.Button(controls, style="Link.TButton", command=self.show_main_view)
+        self.back_button.grid(row=5, column=0, sticky="w", pady=(18, 0))
+        self._bind_text(self.back_button, "back")
+
+        self.status_label = ttk.Label(
+            controls,
+            style="Status.TLabel",
+            textvariable=self.status_var,
+            anchor="w",
+            justify="left",
+            wraplength=260,
+        )
+        self.status_label.grid(row=6, column=0, sticky="ew", pady=(12, 0))
+
+        self._dynamic_updaters.append(self._refresh_play_button)
+        self._dynamic_updaters.append(self._refresh_status_label)
+        self._dynamic_updaters.append(self._refresh_upload_prompt)
+        self._refresh_play_button()
+        self._refresh_status_label()
+
+        self.body.rowconfigure(1, weight=1)
+
+        self._stagger_show([self.image_card, controls])
+
+    def show_decode_view(self):
+        self._clear_body()
+
+        header = ttk.Label(self.body, style="Heading.TLabel")
+        header.grid(row=0, column=0, sticky="w")
+        self._bind_text(header, "header_decoder")
+
+        layout = ttk.Frame(self.body, style="Body.TFrame")
+        layout.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        layout.columnconfigure(0, weight=1)
+        layout.columnconfigure(1, weight=1)
+
+        preview_card = ttk.Frame(layout, style="Card.TFrame", padding=16)
+        preview_card.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+        preview_card.columnconfigure(0, weight=1)
+
+        self.decoded_canvas = tk.Canvas(
+            preview_card,
+            width=360,
+            height=270,
+            bg="#f1f3f2",
+            highlightthickness=0,
+        )
+        self.decoded_canvas.grid(row=0, column=0, sticky="nsew")
+
+        self._detected_mode_name = None
+        self._detected_mode_unknown = False
+        self._set_detected_mode_label()
+        self.detected_label = ttk.Label(preview_card, style="Body.TLabel", textvariable=self.detected_mode_var)
+        self.detected_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
+
+        controls = ttk.Frame(layout, style="Card.TFrame", padding=16)
+        controls.grid(row=0, column=1, sticky="nsew", padx=(14, 0))
+        controls.columnconfigure(0, weight=1)
+
+        self.load_audio_button = ttk.Button(controls, style="Primary.TButton", command=self.load_sstv_audio)
+        self.load_audio_button.grid(row=0, column=0, sticky="ew")
+        self._bind_text(self.load_audio_button, "load_audio")
+
+        self.save_image_button = ttk.Button(controls, style="Secondary.TButton", command=self.save_decoded_image)
+        self.save_image_button.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        self._bind_text(self.save_image_button, "save_image")
+
+        self.clear_image_button = ttk.Button(controls, style="Ghost.TButton", command=self.remove_decoded_image)
+        self.clear_image_button.grid(row=2, column=0, sticky="w", pady=(12, 0))
+        self._bind_text(self.clear_image_button, "clear_image")
+
+        self.back_button = ttk.Button(controls, style="Link.TButton", command=self.show_main_view)
+        self.back_button.grid(row=3, column=0, sticky="w", pady=(18, 0))
+        self._bind_text(self.back_button, "back")
+
+        self.wait_label = ttk.Label(controls, style="Status.TLabel", textvariable=self.wait_var)
+        self.wait_label.grid(row=4, column=0, sticky="w", pady=(12, 0))
+
+        self._dynamic_updaters.append(self._set_detected_mode_label)
+        self.body.rowconfigure(1, weight=1)
+        self._stagger_show([preview_card, controls])
+
+    def _refresh_upload_prompt(self):
+        if self.selected_image is None and hasattr(self, "image_canvas"):
+            self._show_upload_prompt()
+
+    def _set_detected_mode_label(self):
+        if not hasattr(self, "detected_mode_var"):
+            return
+        if self.wait_var.get():
+            return
+        if self._detected_mode_unknown:
+            text = self.tr("detected_mode_unknown")
+        elif self._detected_mode_name:
+            text = (
+                f"Detected Mode: {self._detected_mode_name}"
+                if self.language == "English"
+                else f"Mod Detectat: {self._detected_mode_name}"
+            )
+        else:
+            text = self.tr("detected_mode_none")
+        self.detected_mode_var.set(text)
+
+    def _show_upload_prompt(self):
+        self.image_canvas.delete("all")
+        canvas_width, canvas_height = self._get_canvas_size(self.image_canvas, 360, 270)
+        upload_icon_path = resource_path("icon2.png")
+        if os.path.exists(upload_icon_path):
+            try:
+                icon_image = Image.open(upload_icon_path)
+                icon_image = icon_image.resize((64, 64), Image.LANCZOS)
+                icon_photo = ImageTk.PhotoImage(icon_image)
+                self._image_preview = icon_photo
+                self.image_canvas.create_image(
+                    canvas_width // 2,
+                    canvas_height // 2 - 24,
+                    anchor="center",
+                    image=icon_photo,
+                )
+            except Exception as exc:
+                print(f"Error loading icon: {exc}")
+        self.image_canvas.create_text(
+            canvas_width // 2,
+            canvas_height // 2 + 40,
+            text=self.tr("upload_hint"),
+            anchor="center",
+            font=self.fonts["body"],
+            fill=self.colors["muted"],
+        )
+
+    def load_image(self):
+        file_path = filedialog.askopenfilename(filetypes=[(self.tr("image_files"), "*.jpg;*.png;*.bmp")])
+        if not file_path:
+            return
+
         try:
-            # Open the image and convert to RGB
             image = Image.open(file_path).convert("RGB")
-            # Save the original image globally
-            selected_image = image
+            self.selected_image = image
 
-            # Create a preview image scaled to fit the canvas (for display purposes)
-            preview_image = ImageOps.contain(image, (320, 240), method=resample_method)
-
+            preview_image = ImageOps.contain(image, (360, 270), method=Image.LANCZOS)
             img_preview = ImageTk.PhotoImage(preview_image)
 
-            # Clear the canvas and display the image
-            canvas.delete("all")
-            canvas.create_image(0, 0, anchor="nw", image=img_preview)
-            canvas.image = img_preview  # Keep a reference to prevent garbage collection
+            canvas_width, canvas_height = self._get_canvas_size(self.image_canvas, 360, 270)
+            self.image_canvas.delete("all")
+            self.image_canvas.create_image(
+                canvas_width // 2,
+                canvas_height // 2,
+                anchor="center",
+                image=img_preview,
+            )
+            self.image_canvas.image = img_preview
+            self._image_preview = img_preview
 
-            # Update the status label
-            status_label.config(text=texts[language]['image_success'], fg="green")
-        except Exception as e:
+            self.status_var.set(self.tr("status_loaded"))
+        except Exception as exc:
             traceback.print_exc()
-            messagebox.showerror(texts[language]['error'], texts[language]['image_load_error'].format(e))
+            messagebox.showerror(self.tr("error"), self.tr("image_load_error").format(exc))
 
-def remove_image():
-    """Remove the loaded image and reset the canvas."""
-    global selected_image, status_label, image_canvas, icon_photo, language
-    selected_image = None
-    status_label.config(text="")
-    image_canvas.delete("all")
+    def remove_image(self):
+        self.selected_image = None
+        self.status_var.set("")
+        self._show_upload_prompt()
 
-    # Remove existing checkmark if present
-    if hasattr(window, 'checkmark_label'):
-        window.checkmark_label.destroy()
-        del window.checkmark_label
+    def convert_image_for_sstv(self, mode):
+        if not self.selected_image:
+            raise ValueError(self.tr("please_select_image"))
 
-    # Display the upload prompt and icon again
-    upload_icon_path = resource_path('icon2.png')  # Use resource_path
-    if os.path.exists(upload_icon_path):
-        try:
-            icon_image = Image.open(upload_icon_path)
-            icon_image = icon_image.resize((64, 64), resample_method)
-            icon_photo = ImageTk.PhotoImage(icon_image)
-            image_canvas.create_image(128, 50, anchor="nw", image=icon_photo)
-            image_canvas.icon_photo = icon_photo  # Keep a reference
-            image_canvas.create_text(160, 130, text=texts[language]['press_upload'], anchor="center", font=("Arial", 12), tags='prompt_text')
-        except Exception as e:
-            print(f"Error loading icon: {e}")
-            image_canvas.create_text(160, 130, text=texts[language]['press_upload'], anchor="center", font=("Arial", 12), tags='prompt_text')
-    else:
-        print(f"Upload icon file '{upload_icon_path}' not found.")
-        image_canvas.create_text(160, 130, text=texts[language]['press_upload'], anchor="center", font=("Arial", 12), tags='prompt_text')
+        if mode in {"Robot 36", "Robot36", "Robot 72", "Robot72"}:
+            width, height = 320, 240
+        elif mode in {"Martin M1", "Martin M2", "Scottie S1", "Scottie S2", "Scottie DX"}:
+            width, height = 320, 256
+        else:
+            raise ValueError(self.tr("unsupported_mode").format(mode))
 
-def convert_image_for_sstv(mode):
-    """Convert the loaded image to ensure compatibility with SSTV."""
-    global selected_image, language
-    if not selected_image:
-        raise ValueError(texts[language]['please_select_image'])
+        return self.selected_image.resize((width, height), Image.LANCZOS)
 
-    # Determine the required image size based on the mode
-    if mode == "Robot36":
-        width, height = 320, 240
-    elif mode in ["Martin M1", "Martin M2", "Scottie S1", "Scottie S2", "Scottie DX"]:
-        width, height = 320, 256
-    else:
-        # Default size or raise an error
-        raise ValueError(texts[language]['unsupported_mode'].format(mode))
+    def generate_sstv_signal(self):
+        if not self.selected_image:
+            raise ValueError(self.tr("please_select_image"))
 
-    # Resize the image to the required size
-    converted_image = selected_image.resize((width, height), resample_method)
+        mode = self.mode_var.get()
+        converted_image = self.convert_image_for_sstv(mode)
 
-    return converted_image
-
-def generate_sstv_signal():
-    """Generate the SSTV audio signal."""
-    global selected_image, sstv_signal, mode_var, language
-    if not selected_image:
-        raise ValueError(texts[language]['please_select_image'])
-
-    try:
-        # Get the selected mode
-        mode = mode_var.get()
-
-        # Convert image to the required format
-        converted_image = convert_image_for_sstv(mode)
-
-        # Select the appropriate SSTV class based on the mode
-        if mode == "Robot36":
+        if mode in {"Robot 36", "Robot36"}:
             sstv = Robot36(converted_image, samples_per_sec=44100, bits=16)
+        elif mode in {"Robot 72", "Robot72"}:
+            if Robot72 is None:
+                raise ValueError(self.tr("unsupported_mode").format(mode))
+            sstv = Robot72(converted_image, samples_per_sec=44100, bits=16)
         elif mode == "Martin M1":
             sstv = MartinM1(converted_image, samples_per_sec=44100, bits=16)
         elif mode == "Martin M2":
@@ -357,490 +766,212 @@ def generate_sstv_signal():
         elif mode == "Scottie DX":
             sstv = ScottieDX(converted_image, samples_per_sec=44100, bits=16)
         else:
-            raise ValueError(texts[language]['unsupported_mode'].format(mode))
+            raise ValueError(self.tr("unsupported_mode").format(mode))
 
-        # Collect samples into a list and then convert to a NumPy array
-        samples = list(sstv.gen_samples())
-        audio_signal = np.array(samples, dtype=np.int16)
+        samples = np.fromiter(sstv.gen_samples(), dtype=np.int16)
+        self.sstv_signal = samples
+        return samples
+    def generate_and_play_sstv(self):
+        try:
+            audio_signal = self.generate_sstv_signal()
+            audio_signal_float = audio_signal.astype(np.float32)
+            max_val = np.max(np.abs(audio_signal_float))
+            if max_val != 0:
+                audio_signal_float /= max_val
 
-        # Store the generated SSTV signal globally
-        sstv_signal = audio_signal
+            sd.play(audio_signal_float, samplerate=44100)
+            self.is_playing = True
+            self._refresh_play_button()
+            self.status_var.set(self.tr("status_playing"))
 
-        return audio_signal
-    except Exception as e:
-        traceback.print_exc()
-        raise e
+            threading.Thread(target=self._playback_finished, daemon=True).start()
 
-def reset_play_button():
-    """Reset the play button and clear message label."""
-    global play_button, message_label, language, is_playing
-    is_playing = False
-    play_button.config(text=texts[language]['generate_play'], command=generate_and_play_sstv)
-    message_label.config(text="")
+        except Exception as exc:
+            traceback.print_exc()
+            messagebox.showerror(self.tr("error"), self.tr("failed_generate_play").format(exc))
 
-def playback_finished():
-    """Callback function to reset is_playing flag after playback ends."""
-    global is_playing
-    sd.wait()
-    is_playing = False
-    # Schedule GUI updates on the main thread
-    window.after(0, reset_play_button)
+    def _playback_finished(self):
+        sd.wait()
+        self.is_playing = False
+        self.after(0, self._refresh_play_button)
+        self.after(0, self._refresh_status_label)
 
-def generate_and_play_sstv():
-    """Generate and play SSTV audio using the selected protocol."""
-    global sstv_signal, is_playing, play_button, message_label, language
-    try:
-        # Generate the SSTV signal
-        audio_signal = generate_sstv_signal()
+    def stop_playback(self):
+        if self.is_playing:
+            sd.stop()
+            self.is_playing = False
+            self._refresh_play_button()
+            self._refresh_status_label()
+        else:
+            messagebox.showinfo(self.tr("info"), self.tr("no_playback"))
 
-        # Convert int16 samples to float32 for playback
-        audio_signal_float = audio_signal.astype(np.float32)
+    def _refresh_play_button(self):
+        if not hasattr(self, "play_button"):
+            return
+        if self.is_playing:
+            self.play_button.configure(text=self.tr("stop_playback"), command=self.stop_playback)
+        else:
+            self.play_button.configure(text=self.tr("play_signal"), command=self.generate_and_play_sstv)
 
-        # Normalize the audio signal to -1.0 to 1.0
-        max_val = np.max(np.abs(audio_signal_float))
-        if max_val != 0:
-            audio_signal_float /= max_val
+    def _refresh_status_label(self):
+        if not hasattr(self, "status_label"):
+            return
+        if self.is_playing:
+            self.status_var.set(self.tr("status_playing"))
+        elif self.selected_image:
+            self.status_var.set(self.tr("status_loaded"))
+        else:
+            self.status_var.set(self.tr("status_ready"))
 
-        # Play the generated audio (non-blocking)
-        sd.play(audio_signal_float, samplerate=44100)
-        is_playing = True
+    def download_sstv(self):
+        try:
+            audio_signal = self.generate_sstv_signal()
 
-        # Change the play button to 'Stop'
-        play_button.config(text=texts[language]['stop'], command=stop_playback)
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".wav",
+                filetypes=[(self.tr("wav_files"), "*.wav")],
+                title=self.tr("save_wav"),
+            )
+            if not file_path:
+                return
 
-        # Display 'Playing...' message
-        message_label.config(text=texts[language]['playing'])
-
-        # Start a thread to monitor playback and reset the button after playback finishes
-        threading.Thread(target=playback_finished, daemon=True).start()
-
-    except Exception as e:
-        traceback.print_exc()
-        messagebox.showerror(texts[language]['error'], texts[language]['failed_generate_play'].format(e))
-
-def stop_playback():
-    """Stop the audio playback."""
-    global is_playing, language
-    if is_playing:
-        sd.stop()
-        is_playing = False
-        # Schedule GUI updates on the main thread
-        window.after(0, reset_play_button)
-    else:
-        messagebox.showinfo(texts[language]['info'], texts[language]['no_playback'])
-
-def download_sstv():
-    """Generate the SSTV signal and allow the user to download it."""
-    global sstv_signal, language
-    try:
-        # Generate the SSTV signal
-        audio_signal = generate_sstv_signal()
-
-        # Open a file dialog to choose where to save the file
-        file_path = filedialog.asksaveasfilename(defaultextension=".wav",
-                                                 filetypes=[(texts[language]['wav_files'], "*.wav")],
-                                                 title=texts[language]['save_signal'])
-        if file_path:
-            # Save the audio signal to a WAV file
-            with wave.open(file_path, 'w') as wav_file:
+            with wave.open(file_path, "w") as wav_file:
                 wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)  # 2 bytes for int16
+                wav_file.setsampwidth(2)
                 wav_file.setframerate(44100)
                 wav_file.writeframes(audio_signal.tobytes())
 
-            messagebox.showinfo(texts[language]['success'], texts[language]['signal_saved'].format(file_path))
-    except Exception as e:
-        traceback.print_exc()
-        messagebox.showerror(texts[language]['error'], texts[language]['failed_generate_save'].format(e))
+            self.status_var.set(self.tr("status_saved"))
+            messagebox.showinfo(self.tr("success"), self.tr("signal_saved").format(file_path))
+        except Exception as exc:
+            traceback.print_exc()
+            messagebox.showerror(self.tr("error"), self.tr("failed_generate_save").format(exc))
 
-def open_encode_window():
-    """Open the encoding window."""
-    global mode_var, play_button, message_label, status_label, image_canvas, icon_photo, remove_icon_photo, language, widgets_to_update, current_mode
+    def load_sstv_audio(self):
+        file_path = filedialog.askopenfilename(filetypes=[(self.tr("wav_files"), "*.wav")])
+        if not file_path:
+            return
 
-    # Set current_mode
-    current_mode = 'encode'
+        self.decoded_canvas.delete("all")
+        self._detected_mode_name = None
+        self._detected_mode_unknown = False
+        self._is_decoding = True
+        self.detected_mode_var.set(self.tr("status_decoding"))
+        self.wait_var.set(self.tr("status_decoding"))
 
-    # Clear widgets_to_update
-    widgets_to_update.clear()
-
-    for widget in window.winfo_children():
-        if not isinstance(widget, tk.Menu):
-            widget.destroy()
-
-    # SSTV Encoder label
-    sstv_label = tk.Label(window, text=texts[language]['sstv_encoder'], font=("Arial", 16))
-    sstv_label.pack(pady=5)
-    widgets_to_update['sstv_label'] = sstv_label
-
-    # Frame to hold the image canvas and remove button
-    image_frame = tk.Frame(window)
-    image_frame.pack(pady=5, anchor="center")  # Center the image_frame
-
-    # Image placeholder as a Canvas
-    global image_canvas
-    image_canvas = tk.Canvas(image_frame, width=320, height=240, bg="lightgray")
-    image_canvas.pack(side="left", padx=10)
-    image_canvas.bind("<Button-1>", lambda e: load_image(image_canvas))
-    widgets_to_update['image_canvas'] = image_canvas
-
-    # Remove Image button with icon, placed to the right of the image_canvas
-    remove_icon_path = resource_path('icon3.png')  # Use resource_path
-    if os.path.exists(remove_icon_path):
-        try:
-            remove_icon = Image.open(remove_icon_path)
-            remove_icon = remove_icon.resize((32, 32), resample_method)
-            remove_icon_photo = ImageTk.PhotoImage(remove_icon)
-            remove_button = tk.Button(image_frame, command=remove_image, image=remove_icon_photo, width=40, height=40)
-            remove_button.image = remove_icon_photo  # Keep a reference
-        except Exception as e:
-            print(f"Error loading remove icon: {e}")
-            remove_button = tk.Button(image_frame, text="", command=remove_image, width=4, height=2)
-    else:
-        print(f"Remove icon file '{remove_icon_path}' not found.")
-        remove_button = tk.Button(image_frame, text="", command=remove_image, width=4, height=2)
-    remove_button.pack(side="left", padx=5)
-    widgets_to_update['remove_button'] = remove_button
-
-    # Display 'Press here to upload an image!' and icon
-    if not selected_image:
-        upload_icon_path = resource_path('icon2.png')  # Use resource_path
-        if os.path.exists(upload_icon_path):
-            try:
-                icon_image = Image.open(upload_icon_path)
-                icon_image = icon_image.resize((64, 64), resample_method)
-                icon_photo = ImageTk.PhotoImage(icon_image)
-                image_canvas.create_image(128, 50, anchor="nw", image=icon_photo)
-                image_canvas.icon_photo = icon_photo  # Keep a reference
-                image_canvas.create_text(160, 130, text=texts[language]['press_upload'], anchor="center", font=("Arial", 12), tags='prompt_text')
-            except Exception as e:
-                print(f"Error loading icon: {e}")
-                image_canvas.create_text(160, 130, text=texts[language]['press_upload'], anchor="center", font=("Arial", 12), tags='prompt_text')
-        else:
-            print(f"Upload icon file '{upload_icon_path}' not found.")
-            image_canvas.create_text(160, 130, text=texts[language]['press_upload'], anchor="center", font=("Arial", 12), tags='prompt_text')
-
-    # Status label (above the image canvas)
-    status_label = tk.Label(window, text="", fg="green", font=("Arial", 10))
-    status_label.pack()
-    widgets_to_update['status_label'] = status_label
-
-    # Frame for buttons and options
-    button_frame = tk.Frame(window)
-    button_frame.pack(pady=5)
-
-    # Mode selection OptionMenu
-    modes = ["Robot36", "Martin M1", "Martin M2", "Scottie S1", "Scottie S2", "Scottie DX"]  # "Robot72" eliminat
-    mode_var = tk.StringVar(value="Robot36")  # Default mode
-
-    mode_label = tk.Label(button_frame, text=texts[language]['select_mode'])
-    mode_label.pack(pady=5)
-    widgets_to_update['mode_label'] = mode_label
-
-    mode_menu = tk.OptionMenu(button_frame, mode_var, *modes)
-    mode_menu.pack(pady=5)
-
-    # Generate and Play button
-    play_button = tk.Button(button_frame, text=texts[language]['generate_play'], command=generate_and_play_sstv, width=25)
-    play_button.pack(pady=5)
-    widgets_to_update['play_button'] = play_button
-
-    # Download button
-    download_button = tk.Button(button_frame, text=texts[language]['download_signal'], command=download_sstv, width=25)
-    download_button.pack(pady=5)
-    widgets_to_update['download_button'] = download_button
-
-    # Back button
-    back_button = tk.Button(button_frame, text=texts[language]['back'], command=open_main_window, width=25)
-    back_button.pack(pady=5)
-    widgets_to_update['back_button'] = back_button
-
-    # Message label (below buttons)
-    message_label = tk.Label(window, text="", fg="blue", font=("Arial", 12))
-    message_label.pack(pady=5)
-    widgets_to_update['message_label'] = message_label
-
-def open_decode_window():
-    """Open the decoding window."""
-    global language, widgets_to_update, decoded_image_canvas, current_mode
-    global detected_mode_label
-
-    # Set current_mode
-    current_mode = 'decode'
-
-    # Clear widgets_to_update
-    widgets_to_update.clear()
-
-    for widget in window.winfo_children():
-        if not isinstance(widget, tk.Menu):
-            widget.destroy()
-
-    # SSTV Decoder label
-    sstv_label = tk.Label(window, text=texts[language]['sstv_decoder'], font=("Arial", 16))
-    sstv_label.pack(pady=5)
-    widgets_to_update['sstv_label'] = sstv_label
-
-    # Frame for buttons and options
-    button_frame = tk.Frame(window)
-    button_frame.pack(pady=5)
-
-    # Button to load and decode SSTV audio
-    load_button = tk.Button(button_frame, text=texts[language]['load_sstv_audio'], command=load_sstv_audio, width=25)
-    load_button.pack(pady=5)
-    widgets_to_update['load_button'] = load_button
-
-    # Canvas to display the decoded image
-    decoded_image_canvas = tk.Canvas(window, width=320, height=240, bg="lightgray")
-    decoded_image_canvas.pack(pady=10)
-    widgets_to_update['decoded_image_canvas'] = decoded_image_canvas
-
-    # Label for detected SSTV mode
-    detected_mode_label = tk.Label(window, text=texts[language]['detected_mode_none'], font=("Arial", 10))
-    detected_mode_label.pack(pady=5)
-    widgets_to_update['detected_mode_label'] = detected_mode_label
-
-    # Save Decoded Image button
-    save_decoded_button = tk.Button(button_frame, text=texts[language]['save_decoded_image'], command=save_decoded_image, width=25)
-    save_decoded_button.pack(pady=5)
-    widgets_to_update['save_decoded_button'] = save_decoded_button
-
-    # Delete Decoded Image button with icon
-    delete_icon_path = resource_path('icon3.png')  # Use resource_path
-    if os.path.exists(delete_icon_path):
-        try:
-            delete_icon = Image.open(delete_icon_path)
-            delete_icon = delete_icon.resize((32, 32), resample_method)
-            delete_icon_photo = ImageTk.PhotoImage(delete_icon)
-            delete_decoded_button = tk.Button(window, command=remove_decoded_image, image=delete_icon_photo, width=40, height=40)
-            delete_decoded_button.image = delete_icon_photo  # Keep a reference
-        except Exception as e:
-            print(f"Error loading delete icon: {e}")
-            delete_decoded_button = tk.Button(window, text="", command=remove_decoded_image, width=4, height=2)
-    else:
-        print(f"Delete icon file '{delete_icon_path}' not found.")
-        delete_decoded_button = tk.Button(window, text="", command=remove_decoded_image, width=4, height=2)
-    delete_decoded_button.pack(pady=5)
-    widgets_to_update['delete_decoded_button'] = delete_decoded_button
-
-    # Back button
-    back_button = tk.Button(button_frame, text=texts[language]['back'], command=open_main_window, width=25)
-    back_button.pack(pady=5)
-    widgets_to_update['back_button'] = back_button
-
-    # "Please wait..." label (hidden initially)
-    global wait_label
-    wait_label = tk.Label(window, text=texts[language]['please_wait'], fg="blue", font=("Arial", 12))
-    wait_label.pack(pady=5)
-    wait_label.pack_forget()  # Hide initially
-    widgets_to_update['wait_label'] = wait_label
-
-def update_progress(progress, complete, message=""):
-    """
-    Update the progress based on the decoding progress.
-    """
-    # Since the progress bar was removed, we can update only the message if necessary
-    def gui_update():
-        # Update the detected mode label if a message is provided
-        if message:
-            detected_mode_label.config(text=message)
-
-    # Schedule the GUI update on the main thread
-    window.after(0, gui_update)
-
-def load_sstv_audio():
-    """Load an SSTV audio file and decode it automatically using SSTVDecoder."""
-    global language, decoded_image_canvas, detected_mode_label, wait_label
-
-    # Remove existing checkmark if present
-    if hasattr(window, 'checkmark_label'):
-        window.checkmark_label.destroy()
-        del window.checkmark_label
-
-    # Select the audio file
-    file_path = filedialog.askopenfilename(filetypes=[(texts[language]['wav_files'], "*.wav")])
-    if file_path:
-        # Reset UI elements
-        decoded_image_canvas.delete("all")
-        detected_mode_label.config(text=texts[language]['please_wait'] if language == 'English' else "Vă rugăm să așteptați...")
-        wait_label.config(text=texts[language]['please_wait'] if language == 'English' else "Vă rugăm să așteptați...")
-        wait_label.pack()  # Show the "Please wait..." label
-
-        # Function for decoding in a separate thread
         def decode_thread():
             try:
-                # Initialize the SSTV decoder with language
-                with SSTVDecoder(file_path, language=language) as decoder:
-                    log_message("Starting SSTV decoding..." if language == 'English' else "Încep decodarea SSTV...")
-
-                    # Associate the progress callback
-                    decoder.progress_callback = update_progress
-
-                    # Decode the image
-                    log_message("Decoding in progress..." if language == 'English' else "Decodificare în curs...")
+                with SSTVDecoder(file_path, language=self.language) as decoder:
+                    log_message(
+                        "Starting SSTV decoding..." if self.language == "English" else "Încep decodarea SSTV..."
+                    )
+                    decoder.progress_callback = self._update_progress
                     decoded_image = decoder.decode()
 
                     if decoded_image:
-                        log_message("Decoding completed successfully." if language == 'English' else "Decodare finalizată cu succes.")
-                        # Update detected mode
                         if decoder.mode:
-                            window.after(0, lambda: detected_mode_label.config(
-                                text=f"Detected Mode: {decoder.mode.NAME}" if language == 'English' else f"Mod Detectat: {decoder.mode.NAME}"
-                            ))
+                            self.after(0, lambda: self._apply_detected_mode(decoder.mode.NAME))
                         else:
-                            window.after(0, lambda: detected_mode_label.config(
-                                text=texts[language]['detected_mode_unknown']
-                            ))
-                        # Display the decoded image
-                        display_decoded_image(decoded_image)
-                        # Show green checkmark
-                        show_checkmark()
+                            self.after(0, lambda: self._apply_detected_mode(None, unknown=True))
+                        self.display_decoded_image(decoded_image)
+                        self.after(0, lambda: self._set_wait_status(self.tr("status_decoded")))
                     else:
-                        log_message("No SSTV signal found in the audio." if language == 'English' else "Niciun semnal SSTV găsit în audio.")
-                        window.after(0, lambda: messagebox.showerror(
-                            texts[language]['error'], 
-                            texts[language]['failed_decode_sstv'].format("No SSTV signal found." if language == 'English' else "Niciun semnal SSTV găsit.")
-                        ))
-            except Exception as e:
-                log_message(f"Error occurred: {e}" if language == 'English' else f"Eroare apărută: {e}")
+                        self.after(0, lambda: self._apply_detected_mode(None, unknown=True))
+                        self.after(
+                            0,
+                            lambda: messagebox.showerror(
+                                self.tr("error"),
+                                self.tr("failed_decode_sstv").format(self.tr("no_sstv_signal")),
+                            ),
+                        )
+            except Exception as exc:
+                log_message(
+                    f"Error occurred: {exc}" if self.language == "English" else f"Eroare apărută: {exc}"
+                )
                 traceback.print_exc()
-                window.after(0, lambda: messagebox.showerror(
-                    texts[language]['error'], 
-                    f"{texts[language]['failed_decode_sstv'].format(e)}"
-                ))
+                self.after(
+                    0,
+                    lambda: messagebox.showerror(self.tr("error"), self.tr("failed_decode_sstv").format(exc)),
+                )
             finally:
-                # Hide the "Please wait..." label
-                window.after(0, lambda: wait_label.pack_forget())
+                self._is_decoding = False
+                self.after(0, self._clear_wait_status_if_busy)
 
-        # Start the decoding thread
         threading.Thread(target=decode_thread, daemon=True).start()
 
-def display_decoded_image(image):
-    """
-    Display the decoded image on the canvas.
-    """
-    global decoded_image_canvas, decoded_image_reference
+    def _apply_detected_mode(self, mode_name, unknown=False):
+        self._detected_mode_name = mode_name
+        self._detected_mode_unknown = unknown
+        self._set_detected_mode_label()
 
-    # Determine the canvas size
-    canvas_width = decoded_image_canvas.winfo_width()
-    canvas_height = decoded_image_canvas.winfo_height()
+    def _set_wait_status(self, message):
+        self.wait_var.set(message)
+        self.after(1500, self._clear_wait_status)
 
-    # Resize the image to fit the canvas
-    preview_image = ImageOps.contain(image, (canvas_width, canvas_height), method=Image.LANCZOS)
-    img_preview = ImageTk.PhotoImage(preview_image)
+    def _clear_wait_status(self):
+        self.wait_var.set("")
 
-    # Store a reference to the image to prevent garbage collection
-    decoded_image_reference = image  # Păstrează obiectul original pentru salvare
+    def _clear_wait_status_if_busy(self):
+        if self.wait_var.get() == self.tr("status_decoding"):
+            self.wait_var.set("")
 
-    # Function to update the GUI
-    def gui_update():
-        decoded_image_canvas.delete("all")
-        decoded_image_canvas.create_image(0, 0, anchor="nw", image=img_preview)
-        decoded_image_canvas.image = img_preview  # Keep a reference
+    def _update_progress(self, _progress, _complete, message=""):
+        if message:
+            self.after(0, lambda: self.detected_mode_var.set(message))
 
-    # Schedule the GUI update on the main thread
-    window.after(0, gui_update)
+    def display_decoded_image(self, image):
+        self.decoded_image_reference = image
 
-def save_decoded_image():
-    """Save the decoded image to a file."""
-    global decoded_image_canvas, language, decoded_image_reference
+        canvas_width, canvas_height = self._get_canvas_size(self.decoded_canvas, 360, 270)
 
-    # Verifică dacă există o imagine decodată
-    if decoded_image_reference is None:
-        messagebox.showerror(texts[language]['error'], texts[language]['no_decoded_image'])
-        return
+        preview_image = ImageOps.contain(image, (canvas_width, canvas_height), method=Image.LANCZOS)
+        img_preview = ImageTk.PhotoImage(preview_image)
 
-    # Deschide un dialog de salvare
-    file_path = filedialog.asksaveasfilename(defaultextension=".png",
-                                             filetypes=[("PNG files", "*.png"), ("JPEG files", "*.jpg;*.jpeg"), ("BMP files", "*.bmp")],
-                                             title=texts[language]['save_decoded_image'])
-    if file_path:
+        def gui_update():
+            self.decoded_canvas.delete("all")
+            self.decoded_canvas.create_image(
+                canvas_width // 2,
+                canvas_height // 2,
+                anchor="center",
+                image=img_preview,
+            )
+            self.decoded_canvas.image = img_preview
+            self._decoded_preview = img_preview
+
+        self.after(0, gui_update)
+
+    def save_decoded_image(self):
+        if self.decoded_image_reference is None:
+            messagebox.showerror(self.tr("error"), self.tr("no_decoded_image"))
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), ("JPEG files", "*.jpg;*.jpeg"), ("BMP files", "*.bmp")],
+            title=self.tr("save_image"),
+        )
+        if not file_path:
+            return
+
         try:
-            # Salvează imaginea
-            decoded_image_reference.save(file_path)
-            messagebox.showinfo(texts[language]['success'], texts[language]['decoded_image_saved'].format(file_path))
-        except Exception as e:
+            self.decoded_image_reference.save(file_path)
+            messagebox.showinfo(self.tr("success"), self.tr("decoded_image_saved").format(file_path))
+        except Exception as exc:
             traceback.print_exc()
-            messagebox.showerror(texts[language]['error'], texts[language]['failed_save_image'].format(e))
+            messagebox.showerror(self.tr("error"), self.tr("failed_save_image").format(exc))
 
-def remove_decoded_image():
-    """Remove the decoded image and reset the canvas."""
-    global decoded_image_canvas, detected_mode_label, language
+    def remove_decoded_image(self):
+        if hasattr(self, "decoded_canvas"):
+            self.decoded_canvas.delete("all")
+        self._apply_detected_mode(None, unknown=False)
+        self.decoded_image_reference = None
 
-    decoded_image_canvas.delete("all")
-    detected_mode_label.config(text=texts[language]['detected_mode_none'] if language == 'English' else texts[language]['detected_mode_none'])
+    @staticmethod
+    def _get_canvas_size(canvas, min_width, min_height):
+        canvas.update_idletasks()
+        return max(canvas.winfo_width(), min_width), max(canvas.winfo_height(), min_height)
 
-    # Remove existing checkmark if present
-    if hasattr(window, 'checkmark_label'):
-        window.checkmark_label.destroy()
-        del window.checkmark_label
 
-def show_checkmark():
-    """Schedule the display of a green checkmark in the main thread."""
-    def update_label():
-        global checkmark_label
-        if not hasattr(window, 'checkmark_label'):
-            checkmark_label = tk.Label(window, text="✅", font=("Arial", 24), fg="green")
-            checkmark_label.pack(pady=5)
-            window.checkmark_label = checkmark_label
-        else:
-            window.checkmark_label.config(text="✅")
-
-    window.after(0, update_label)
-
-def open_main_window():
-    """Open the main window."""
-    global language, widgets_to_update, current_mode
-    # Set current_mode
-    current_mode = 'main'
-    # Clear widgets_to_update
-    widgets_to_update.clear()
-
-    for widget in window.winfo_children():
-        if not isinstance(widget, tk.Menu):
-            widget.destroy()
-    main_label = tk.Label(window, text=texts[language]['choose_action'], font=("Arial", 16))
-    main_label.pack(pady=20)
-    widgets_to_update['main_label'] = main_label
-
-    encode_button = tk.Button(window, text=texts[language]['encode_sstv'], command=open_encode_window, width=20)
-    encode_button.pack(pady=10)
-    widgets_to_update['encode_button'] = encode_button
-
-    # Add Decode SSTV button
-    decode_button = tk.Button(window, text=texts[language]['decode_sstv'], command=open_decode_window, width=20)
-    decode_button.pack(pady=10)
-    widgets_to_update['decode_button'] = decode_button
-
-    # Exit button
-    exit_button = tk.Button(window, text=texts[language]['exit'], command=window.quit, width=20)
-    exit_button.pack(pady=10)
-    widgets_to_update['exit_button'] = exit_button
-
-def show_version():
-    """Show version information."""
-    messagebox.showinfo(texts[language]['version'], texts[language]['version_info'])
-
-# Main window setup
-window = tk.Tk()
-window.title(texts[language]['title'])
-window.geometry("400x600")  # Adjusted size for better layout
-window.resizable(False, False)
-
-# Initialize the language variable
-lang_var = tk.StringVar(value=language)
-
-# Set the window icon
-icon_path = resource_path('icon.ico')  # Use resource_path
-if os.path.exists(icon_path):
-    try:
-        window.iconbitmap(icon_path)
-    except Exception as e:
-        print(f"Error setting icon: {e}")
-else:
-    print(f"Icon file '{icon_path}' not found. Window will use the default icon.")
-
-# Create the menu bar
-create_menu_bar()
-
-# Open the main window
-open_main_window()
-window.mainloop()
+if __name__ == "__main__":
+    app = SSTVApp()
+    app.mainloop()

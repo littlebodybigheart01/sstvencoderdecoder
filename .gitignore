@@ -1,0 +1,19 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.pdb
+
+# Virtual environments
+.venv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Logs and temp
+*.log
+.DS_Store
+Thumbs.db
